@@ -9,6 +9,7 @@ use App\Jobs\UserVerificationInfo;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 class AgeVerificationController extends Controller
 {    
@@ -23,13 +24,11 @@ class AgeVerificationController extends Controller
         $issuerIdentifier = env('ISSUER_UUID');
 
         $issuer = $request->header('X-Age-Verification') ?? null;
-
-        if ($issuer == null || $issuer !== $issuerIdentifier) {
-            // return response()->json(['message' => 'Not authorized'], 401);
+                
+        if ($issuer == null || $issuer !== $issuerIdentifier || $this->checkPassword($request->vpassword, $issuer) === false) {
+            return response()->json(['message' => 'Not authorized'], 401);
         }
-        
-        // TODO Check if vpassword match issuer ($issuer) password, can be a issuer list or DB of issuers
-
+                                
         $zkeys = file_get_contents(storage_path('app/private/build/age.zkey'));
 
         $key64 = base64_encode($zkeys);
@@ -90,17 +89,38 @@ class AgeVerificationController extends Controller
         if ($request->input('member') && $request->input('lindex')) {
      
             $addr = [];
-            $path = storage_path('app/private/merkle_leaf.json');
-
+            
             $addr['member'] = $request->input('member');
             $addr['lindex'] = $request->input('lindex');
 
-            file_put_contents($path, json_encode($addr, JSON_PRETTY_PRINT |  JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            Storage::disk('local')->put('merkle_leaf.json', json_encode($addr, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));
 
             return response()->json([['message' => 'ok']]);
         }
         
         return response()->json(['message' => 'Webhook test']);
+    }
+
+    private function checkPassword(string $password, string $issuer): bool
+    {              
+        try {
+            $response = Http::retry(3, 200)
+                ->timeout(10)
+                ->asJson()
+                ->post('https://join.siehog.com/api/check', [
+                'issuer' => $issuer,
+                'password' => $password
+            ]);
+
+            if ($response->successful()) {
+                return true;
+            }            
+
+        } catch (\Exception $e) {
+            
+        }
+    
+        return false;
     }
     
 }
